@@ -8,6 +8,7 @@ FORCE=false
 DAYS_OLD=7
 TAG_NAME="TwitchCounter"
 KEEP_MAIN_KEY=true
+KEEP_MAIN_SG=true
 AWS_REGION=${AWS_REGION:-"us-east-1"}
 
 # Set AWS region
@@ -41,9 +42,13 @@ while [[ $# -gt 0 ]]; do
       KEEP_MAIN_KEY=false
       shift
       ;;
+    --delete-all-sg)
+      KEEP_MAIN_SG=false
+      shift
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--dry-run] [--force] [--days-old N] [--tag-name NAME] [--region REGION] [--delete-all-keys]"
+      echo "Usage: $0 [--dry-run] [--force] [--days-old N] [--tag-name NAME] [--region REGION] [--delete-all-keys] [--delete-all-sg]"
       exit 1
       ;;
   esac
@@ -113,14 +118,23 @@ if [ "$DRY_RUN" = false ]; then
   # Clean up security groups
   echo "Cleaning up security groups..."
   SG_IDS=$(aws ec2 describe-security-groups \
-    --filters "Name=group-name,Values=TwitchCounterSG*" \
-    --query 'SecurityGroups[*].GroupId' \
+    --query "SecurityGroups[?starts_with(GroupName, 'TwitchCounterSG')].{Id:GroupId,Name:GroupName}" \
     --output text)
   
-  for SG_ID in $SG_IDS; do
-    echo "Deleting security group $SG_ID..."
-    aws ec2 delete-security-group --group-id "$SG_ID" 2>/dev/null || echo "Could not delete security group $SG_ID (it may be in use)"
-  done
+  if [ -z "$SG_IDS" ]; then
+    echo "No security groups found matching TwitchCounterSG*"
+  else
+    while read -r SG_ID SG_NAME; do
+      # Skip the main security group if KEEP_MAIN_SG is true
+      if [ "$KEEP_MAIN_SG" = true ] && [ "$SG_NAME" = "TwitchCounterSG" ]; then
+        echo "Keeping main security group $SG_NAME ($SG_ID)"
+        continue
+      fi
+      
+      echo "Deleting security group $SG_NAME ($SG_ID)..."
+      aws ec2 delete-security-group --group-id "$SG_ID" 2>/dev/null || echo "Could not delete security group $SG_ID (it may be in use)"
+    done <<< "$SG_IDS"
+  fi
   
   # Clean up key pairs
   echo "Cleaning up key pairs..."

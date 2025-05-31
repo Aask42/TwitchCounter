@@ -261,6 +261,7 @@ If you need to clean up AWS resources manually:
   - `--tag-name NAME`: Delete instances with this tag name (default: TwitchCounter)
   - `--region REGION`: Specify the AWS region (default: us-east-1 or value of AWS_REGION environment variable)
   - `--delete-all-keys`: Delete all key pairs including the main TwitchCounterKey (by default, the main key is preserved)
+  - `--delete-all-sg`: Delete all security groups including the main TwitchCounterSG (by default, the main security group is preserved)
 
 3. **Example usage**:
    ```bash
@@ -278,6 +279,12 @@ If you need to clean up AWS resources manually:
    
    # Delete all key pairs including the main one
    ./cleanup_aws.sh --delete-all-keys
+   
+   # Delete all security groups including the main one
+   ./cleanup_aws.sh --delete-all-sg
+   
+   # Complete cleanup of all resources
+   ./cleanup_aws.sh --force --delete-all-keys --delete-all-sg
    ```
 
 ### Key Pair Issues
@@ -312,3 +319,27 @@ If you encounter key pair errors like "InvalidKeyPair.Duplicate: The keypair alr
      # Select "validate" from the dropdown
      ```
    - This will check for existing key pairs and other resources without making changes
+
+### Security Group Issues
+
+If you encounter security group errors like "InvalidGroup.Duplicate: The security group 'TwitchCounterSG' already exists":
+
+1. **Using the AWS Console**:
+   - Go to the AWS EC2 Console
+   - Navigate to "Security Groups" under "Network & Security"
+   - Delete the existing security group or use a different name
+
+2. **Using the AWS CLI**:
+   - Delete the existing security group:
+     ```bash
+     aws ec2 describe-security-groups --query "SecurityGroups[?GroupName=='TwitchCounterSG'].GroupId" --output text | xargs -I {} aws ec2 delete-security-group --group-id {}
+     ```
+   - Or use the cleanup script with the --delete-all-sg option:
+     ```bash
+     ./cleanup_aws.sh --delete-all-sg
+     ```
+
+3. **In GitHub Actions**:
+   - The workflow will automatically handle duplicate security groups by:
+     - Using the existing security group if it's found
+     - Creating a new security group only if needed
