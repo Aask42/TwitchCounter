@@ -1,287 +1,218 @@
-# AWS Deployment Guide with AWS CLI
+# AWS Deployment Guide
 
-This guide will walk you through deploying the Twitch Word Counter on an AWS EC2 free tier instance using the AWS CLI and configuring a Namecheap domain with Dynamic DNS (DDNS).
+This guide provides multiple options for deploying the Twitch Word Counter to AWS:
 
-## Prerequisites
+1. **Automated Deployment with GitHub Actions** - Recommended for continuous deployment
+2. **Manual Deployment with Setup Script** - Quick one-time setup
+3. **Manual Deployment with AWS CLI** - For advanced users who want more control
+
+## Option 1: Automated Deployment with GitHub Actions
+
+This method uses GitHub Actions to automatically deploy your application to AWS whenever you push changes to the main branch.
+
+### Prerequisites
 
 - AWS account eligible for free tier
-- Namecheap domain
-- AWS CLI installed and configured on your local machine
-- Git installed on your local machine
+- Namecheap domain with Dynamic DNS enabled
+- GitHub repository for your project
 
-## Step 1: Install and Configure AWS CLI
+### Setup Steps
 
-If you haven't already installed the AWS CLI, follow these steps:
-
-### For macOS:
-```bash
-brew install awscli
-```
-
-### For Linux:
-```bash
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-unzip awscliv2.zip
-sudo ./aws/install
-```
-
-### For Windows:
-Download and run the installer from: https://aws.amazon.com/cli/
-
-### Configure AWS CLI:
-```bash
-aws configure
-```
-Enter your AWS Access Key ID, Secret Access Key, default region (e.g., us-east-1), and output format (json).
-
-## Step 2: Create Key Pair for SSH Access
-
-```bash
-aws ec2 create-key-pair --key-name TwitchCounterKey --query 'KeyMaterial' --output text > TwitchCounterKey.pem
-chmod 400 TwitchCounterKey.pem
-```
-
-## Step 3: Create Security Group
-
-```bash
-# Create security group
-aws ec2 create-security-group --group-name TwitchCounterSG --description "Security group for Twitch Counter application"
-
-# Get your public IP
-MY_IP=$(curl -s https://checkip.amazonaws.com)
-
-# Add rules to security group
-aws ec2 authorize-security-group-ingress --group-name TwitchCounterSG --protocol tcp --port 22 --cidr $MY_IP/32
-aws ec2 authorize-security-group-ingress --group-name TwitchCounterSG --protocol tcp --port 80 --cidr 0.0.0.0/0
-aws ec2 authorize-security-group-ingress --group-name TwitchCounterSG --protocol tcp --port 443 --cidr 0.0.0.0/0
-aws ec2 authorize-security-group-ingress --group-name TwitchCounterSG --protocol tcp --port 8080 --cidr 0.0.0.0/0
-```
-
-## Step 4: Launch EC2 Instance
-
-```bash
-# Get the latest Amazon Linux 2023 AMI ID
-AMI_ID=$(aws ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-2023*x86_64" "Name=state,Values=available" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
-
-# Launch instance
-INSTANCE_ID=$(aws ec2 run-instances \
-  --image-id $AMI_ID \
-  --count 1 \
-  --instance-type t2.micro \
-  --key-name TwitchCounterKey \
-  --security-groups TwitchCounterSG \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=TwitchCounter}]' \
-  --query 'Instances[0].InstanceId' \
-  --output text)
-
-echo "Launched instance: $INSTANCE_ID"
-
-# Wait for instance to be running
-aws ec2 wait instance-running --instance-ids $INSTANCE_ID
-
-# Get public DNS name
-PUBLIC_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicDnsName' --output text)
-PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
-
-echo "Instance is running at: $PUBLIC_DNS"
-echo "Public IP: $PUBLIC_IP"
-```
-
-## Step 5: Create and Upload Setup Script
-
-Create a file named `setup.sh` with the following content:
-
-```bash
-#!/bin/bash
-
-# Update system
-sudo yum update -y
-
-# Install Docker
-sudo yum install -y docker
-sudo systemctl start docker
-sudo systemctl enable docker
-sudo usermod -aG docker ec2-user
-
-# Install Docker Compose
-sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-sudo chmod +x /usr/local/bin/docker-compose
-
-# Install Nginx
-sudo yum install -y nginx
-sudo systemctl start nginx
-sudo systemctl enable nginx
-
-# Install ddclient for DDNS
-sudo yum install -y ddclient
-
-# Clone the repository
-git clone https://github.com/Aask42/TwitchCounter.git
-cd TwitchCounter
-
-# Create .env file
-cp .env.example .env
-
-# Create Nginx configuration
-sudo tee /etc/nginx/conf.d/twitch-counter.conf > /dev/null << 'EOF'
-server {
-    listen 80;
-    server_name DOMAIN_PLACEHOLDER;
-
-    location / {
-        proxy_pass http://localhost:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-EOF
-
-# Test and reload Nginx
-sudo nginx -t
-sudo systemctl reload nginx
-
-echo "Setup completed!"
-```
-
-Upload the script to your EC2 instance:
-
-```bash
-# Wait a bit for the instance to initialize
-sleep 30
-
-# Upload setup script
-scp -i TwitchCounterKey.pem setup.sh ec2-user@$PUBLIC_DNS:~/setup.sh
-
-# Make the script executable
-ssh -i TwitchCounterKey.pem ec2-user@$PUBLIC_DNS "chmod +x ~/setup.sh"
-
-# Run the setup script
-ssh -i TwitchCounterKey.pem ec2-user@$PUBLIC_DNS "~/setup.sh"
-```
-
-## Step 6: Configure the Application
-
-Connect to your instance and configure the application:
-
-```bash
-ssh -i TwitchCounterKey.pem ec2-user@$PUBLIC_DNS
-```
-
-Once connected:
-
-1. Edit the .env file:
+1. **Fork or clone the repository**:
    ```bash
+   git clone https://github.com/Aask42/TwitchCounter.git
    cd TwitchCounter
-   nano .env
    ```
 
-2. Update with your configuration:
-   ```
-   TWITCH_CHANNEL=skittishandbus
-   TARGET_WORDS=fuck,shit,damn
-   ```
-   Save and exit (Ctrl+X, then Y, then Enter)
+2. **Add GitHub Secrets**:
+   In your GitHub repository, go to Settings > Secrets and add the following secrets:
+   
+   - `AWS_ACCESS_KEY_ID`: Your AWS access key
+   - `AWS_SECRET_ACCESS_KEY`: Your AWS secret key
+   - `AWS_REGION`: Your preferred AWS region (e.g., us-east-1)
+   - `NAMECHEAP_DOMAIN`: Your Namecheap domain (e.g., example.com)
+   - `NAMECHEAP_DDNS_PASSWORD`: Your Namecheap Dynamic DNS password
 
-3. Update the Nginx configuration with your domain:
+3. **Push to GitHub**:
    ```bash
-   sudo sed -i 's/DOMAIN_PLACEHOLDER/your-domain.com www.your-domain.com/g' /etc/nginx/conf.d/twitch-counter.conf
+   git push
+   ```
+
+4. **Monitor Deployment**:
+   Go to the Actions tab in your GitHub repository to monitor the deployment progress.
+
+5. **After First Deployment**:
+   After the first successful deployment, GitHub Actions will output the instance ID and public DNS. Add these as secrets to your repository:
+   
+   - `INSTANCE_ID`: The EC2 instance ID
+   - `PUBLIC_DNS`: The EC2 public DNS name
+   - `EC2_SSH_KEY`: The contents of your TwitchCounterKey.pem file
+
+### How It Works
+
+The GitHub Actions workflow:
+1. Creates an EC2 instance if one doesn't exist
+2. Sets up Docker, Docker Compose, and Nginx
+3. Configures DDNS with a custom script (no ddclient required)
+4. Deploys the application
+5. Updates your domain to point to the server
+
+## Option 2: Manual Deployment with Setup Script
+
+This method uses a single setup script to deploy the application to an existing EC2 instance.
+
+### Prerequisites
+
+- AWS account with an EC2 instance running Amazon Linux 2023
+- Namecheap domain with Dynamic DNS enabled
+- SSH access to your EC2 instance
+
+### Setup Steps
+
+1. **Connect to your EC2 instance**:
+   ```bash
+   ssh -i your-key.pem ec2-user@your-instance-public-dns
+   ```
+
+2. **Download the setup script**:
+   ```bash
+   curl -O https://raw.githubusercontent.com/Aask42/TwitchCounter/main/setup.sh
+   chmod +x setup.sh
+   ```
+
+3. **Run the setup script as root**:
+   ```bash
+   sudo ./setup.sh
+   ```
+
+4. **Follow the prompts**:
+   The script will ask for your Namecheap domain and DDNS password.
+
+### What the Script Does
+
+The setup script:
+1. Updates the system
+2. Installs Docker, Docker Compose, and Nginx
+3. Creates a custom DDNS update script (no ddclient required)
+4. Sets up a cron job to update DDNS every 10 minutes
+5. Clones the repository and configures the application
+6. Sets up Nginx as a reverse proxy
+7. Starts the application
+
+## Option 3: Manual Deployment with AWS CLI
+
+For advanced users who want more control over the deployment process.
+
+### Prerequisites
+
+- AWS CLI installed and configured
+- Namecheap domain with Dynamic DNS enabled
+
+### Setup Steps
+
+1. **Create a key pair**:
+   ```bash
+   aws ec2 create-key-pair --key-name TwitchCounterKey --query 'KeyMaterial' --output text > TwitchCounterKey.pem
+   chmod 400 TwitchCounterKey.pem
+   ```
+
+2. **Create a security group**:
+   ```bash
+   SG_ID=$(aws ec2 create-security-group --group-name TwitchCounterSG --description "Security group for Twitch Counter" --query 'GroupId' --output text)
+   
+   aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr $(curl -s https://checkip.amazonaws.com)/32
+   aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0
+   aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 443 --cidr 0.0.0.0/0
+   aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 8080 --cidr 0.0.0.0/0
+   ```
+
+3. **Launch an EC2 instance**:
+   ```bash
+   AMI_ID=$(aws ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-2023*x86_64" "Name=state,Values=available" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
+   
+   INSTANCE_ID=$(aws ec2 run-instances \
+     --image-id $AMI_ID \
+     --count 1 \
+     --instance-type t2.micro \
+     --key-name TwitchCounterKey \
+     --security-group-ids $SG_ID \
+     --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=TwitchCounter}]' \
+     --query 'Instances[0].InstanceId' \
+     --output text)
+   
+   aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+   
+   PUBLIC_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicDnsName' --output text)
+   ```
+
+4. **Download and modify the setup script**:
+   ```bash
+   curl -O https://raw.githubusercontent.com/Aask42/TwitchCounter/main/setup.sh
+   ```
+
+5. **Upload and run the setup script**:
+   ```bash
+   scp -i TwitchCounterKey.pem setup.sh ec2-user@$PUBLIC_DNS:~/setup.sh
+   ssh -i TwitchCounterKey.pem ec2-user@$PUBLIC_DNS "chmod +x ~/setup.sh && sudo ~/setup.sh"
+   ```
+
+## Troubleshooting
+
+### DDNS Not Updating
+
+If your domain is not updating correctly:
+
+1. **Check the DDNS update script**:
+   ```bash
+   ssh -i your-key.pem ec2-user@your-instance-public-dns
+   cat /home/ec2-user/update_ddns.sh
+   ```
+
+2. **Run the update script manually**:
+   ```bash
+   /home/ec2-user/update_ddns.sh
+   ```
+
+3. **Check the cron job**:
+   ```bash
+   crontab -l
+   ```
+
+### Application Not Starting
+
+If the application doesn't start:
+
+1. **Check Docker logs**:
+   ```bash
+   cd ~/TwitchCounter
+   docker-compose logs
+   ```
+
+2. **Check if Docker is running**:
+   ```bash
+   sudo systemctl status docker
+   ```
+
+3. **Restart the application**:
+   ```bash
+   docker-compose down
+   docker-compose up -d
+   ```
+
+### Nginx Configuration Issues
+
+If Nginx is not working correctly:
+
+1. **Check Nginx configuration**:
+   ```bash
    sudo nginx -t
-   sudo systemctl reload nginx
    ```
-   Replace `your-domain.com` with your actual domain.
 
-## Step 7: Configure Namecheap DDNS
-
-1. Log in to your Namecheap account
-2. Go to "Domain List" and select your domain
-3. Click "Manage"
-4. Navigate to "Advanced DNS"
-5. Enable Dynamic DNS:
-   - Toggle "Dynamic DNS" to ON
-   - Note your Dynamic DNS Password
-
-6. Configure ddclient on your EC2 instance:
+2. **Check Nginx status**:
    ```bash
-   sudo nano /etc/ddclient.conf
+   sudo systemctl status nginx
    ```
 
-7. Add the following configuration:
-   ```
-   daemon=600
-   use=web, web=checkip.dyndns.org/, web-skip='IP Address'
-   protocol=namecheap
-   server=dynamicdns.park-your-domain.com
-   login=your-domain.com
-   password=your-dynamic-dns-password
-   @,www
-   ```
-   Replace `your-domain.com` with your actual domain and `your-dynamic-dns-password` with the password from step 5.
-
-8. Start and enable ddclient:
+3. **Check Nginx logs**:
    ```bash
-   sudo systemctl start ddclient
-   sudo systemctl enable ddclient
-   ```
-
-## Step 8: Run the Application
-
-Start the application using Docker Compose:
-
-```bash
-cd ~/TwitchCounter
-docker-compose up -d
-```
-
-Your application should now be running and accessible at your domain!
-
-## Step 9: Create a Deployment Script (Optional)
-
-For future deployments, you can create a deployment script on your local machine:
-
-```bash
-#!/bin/bash
-
-# Pull latest changes
-ssh -i TwitchCounterKey.pem ec2-user@your-domain.com "cd ~/TwitchCounter && git pull"
-
-# Rebuild and restart containers
-ssh -i TwitchCounterKey.pem ec2-user@your-domain.com "cd ~/TwitchCounter && docker-compose down && docker-compose up -d"
-
-echo "Deployment completed!"
-```
-
-Save this as `deploy.sh`, make it executable with `chmod +x deploy.sh`, and run it whenever you want to deploy updates.
-
-## Monitoring and Maintenance
-
-- Check application logs:
-  ```bash
-  ssh -i TwitchCounterKey.pem ec2-user@your-domain.com "cd ~/TwitchCounter && docker-compose logs -f"
-  ```
-
-- Restart the application:
-  ```bash
-  ssh -i TwitchCounterKey.pem ec2-user@your-domain.com "cd ~/TwitchCounter && docker-compose restart"
-  ```
-
-- Stop the application:
-  ```bash
-  ssh -i TwitchCounterKey.pem ec2-user@your-domain.com "cd ~/TwitchCounter && docker-compose down"
-  ```
-
-## Cleanup
-
-If you want to remove all resources created for this project:
-
-```bash
-# Terminate the EC2 instance
-aws ec2 terminate-instances --instance-ids $INSTANCE_ID
-
-# Delete the security group (after instance is terminated)
-aws ec2 wait instance-terminated --instance-ids $INSTANCE_ID
-aws ec2 delete-security-group --group-name TwitchCounterSG
-
-# Delete the key pair
-aws ec2 delete-key-pair --key-name TwitchCounterKey
+   sudo tail -f /var/log/nginx/error.log

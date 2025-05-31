@@ -1,0 +1,252 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+        
+    - name: Set up environment variables
+      run: |
+        echo "INSTANCE_ID=${{ secrets.INSTANCE_ID }}" >> $GITHUB_ENV
+        echo "PUBLIC_DNS=${{ secrets.PUBLIC_DNS }}" >> $GITHUB_ENV
+        
+    - name: Check if instance exists
+      id: check_instance
+      run: |
+        if [ -z "${{ secrets.INSTANCE_ID }}" ]; then
+          echo "::set-output name=exists::false"
+        else
+          INSTANCE_STATE=$(aws ec2 describe-instances --instance-ids ${{ secrets.INSTANCE_ID }} --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo "terminated")
+          if [ "$INSTANCE_STATE" = "running" ]; then
+            echo "::set-output name=exists::true"
+          else
+            echo "::set-output name=exists::false"
+          fi
+        fi
+        
+    - name: Create EC2 instance if needed
+      if: steps.check_instance.outputs.exists != 'true'
+      run: |
+        # Create key pair
+        aws ec2 create-key-pair --key-name TwitchCounterKey --query 'KeyMaterial' --output text > TwitchCounterKey.pem
+        chmod 400 TwitchCounterKey.pem
+        
+        # Create security group
+        SG_ID=$(aws ec2 create-security-group --group-name TwitchCounterSG --description "Security group for Twitch Counter application" --query 'GroupId' --output text)
+        
+        # Add rules to security group
+        aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 0.0.0.0/0
+        aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0
+        aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 443 --cidr 0.0.0.0/0
+        aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 8080 --cidr 0.0.0.0/0
+        
+        # Get the latest Amazon Linux 2023 AMI ID
+        AMI_ID=$(aws ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-2023*x86_64" "Name=state,Values=available" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
+        
+        # Launch instance
+        INSTANCE_ID=$(aws ec2 run-instances \
+          --image-id $AMI_ID \
+          --count 1 \
+          --instance-type t2.micro \
+          --key-name TwitchCounterKey \
+          --security-group-ids $SG_ID \
+          --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=TwitchCounter}]' \
+          --query 'Instances[0].InstanceId' \
+          --output text)
+        
+        echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
+        
+        # Wait for instance to be running
+        aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+        
+        # Get public DNS name
+        PUBLIC_DNS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicDnsName' --output text)
+        PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+        
+        echo "PUBLIC_DNS=$PUBLIC_DNS" >> $GITHUB_ENV
+        echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
+        
+        # Save instance info to GitHub secrets
+        # Note: This requires additional setup with GitHub API tokens
+        echo "::warning::New instance created. Please add these secrets to your GitHub repository:"
+        echo "::warning::INSTANCE_ID: $INSTANCE_ID"
+        echo "::warning::PUBLIC_DNS: $PUBLIC_DNS"
+        
+        # Wait for SSH to be available
+        echo "Waiting for SSH to become available..."
+        while ! nc -z $PUBLIC_DNS 22; do
+          sleep 5
+        done
+        
+        # Add the host key to known_hosts
+        mkdir -p ~/.ssh
+        ssh-keyscan -H $PUBLIC_DNS >> ~/.ssh/known_hosts
+        
+    - name: Save key to file
+      if: steps.check_instance.outputs.exists != 'true'
+      run: |
+        echo "${{ secrets.EC2_SSH_KEY }}" > TwitchCounterKey.pem
+        chmod 400 TwitchCounterKey.pem
+        
+    - name: Create setup script
+      run: |
+        cat > setup.sh << 'EOF'
+        #!/bin/bash
+
+        # Update system
+        sudo yum update -y
+
+        # Install Docker
+        sudo yum install -y docker
+        sudo systemctl start docker
+        sudo systemctl enable docker
+        sudo usermod -aG docker ec2-user
+
+        # Install Docker Compose
+        sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        sudo chmod +x /usr/local/bin/docker-compose
+
+        # Install Nginx
+        sudo yum install -y nginx
+        sudo systemctl start nginx
+        sudo systemctl enable nginx
+
+        # Create DDNS update script (instead of ddclient)
+        cat > /home/ec2-user/update_ddns.sh << 'EOFDDNS'
+        #!/bin/bash
+
+        # Namecheap DDNS update script
+        DOMAIN="DOMAIN_PLACEHOLDER"
+        PASSWORD="PASSWORD_PLACEHOLDER"
+        HOST="@"
+        IP=$(curl -s https://checkip.amazonaws.com)
+
+        # Update DDNS record
+        curl -s "https://dynamicdns.park-your-domain.com/update?host=$HOST&domain=$DOMAIN&password=$PASSWORD&ip=$IP"
+
+        echo "DDNS updated for $DOMAIN with IP $IP"
+        EOFDDNS
+
+        chmod +x /home/ec2-user/update_ddns.sh
+
+        # Set up cron job for DDNS updates
+        (crontab -l 2>/dev/null; echo "*/10 * * * * /home/ec2-user/update_ddns.sh") | crontab -
+
+        # Clone the repository
+        git clone https://github.com/Aask42/TwitchCounter.git /home/ec2-user/TwitchCounter
+        cd /home/ec2-user/TwitchCounter
+
+        # Create .env file
+        cp .env.example .env
+
+        # Create Nginx configuration
+        sudo tee /etc/nginx/conf.d/twitch-counter.conf > /dev/null << 'EOFNGINX'
+        server {
+            listen 80;
+            server_name DOMAIN_PLACEHOLDER;
+
+            location / {
+                proxy_pass http://localhost:8080;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+        }
+        EOFNGINX
+
+        # Test and reload Nginx
+        sudo nginx -t
+        sudo systemctl reload nginx
+
+        echo "Setup completed!"
+        EOF
+        
+        # Replace placeholders with actual values
+        sed -i "s/DOMAIN_PLACEHOLDER/${{ secrets.NAMECHEAP_DOMAIN }}/g" setup.sh
+        
+    - name: Upload and run setup script
+      run: |
+        if [ "${{ steps.check_instance.outputs.exists }}" != "true" ]; then
+          # For new instance
+          scp -i TwitchCounterKey.pem -o StrictHostKeyChecking=no setup.sh ec2-user@$PUBLIC_DNS:~/setup.sh
+          ssh -i TwitchCounterKey.pem -o StrictHostKeyChecking=no ec2-user@$PUBLIC_DNS "chmod +x ~/setup.sh && ~/setup.sh"
+        else
+          # For existing instance
+          scp -i TwitchCounterKey.pem -o StrictHostKeyChecking=no setup.sh ec2-user@${{ secrets.PUBLIC_DNS }}:~/setup.sh
+          ssh -i TwitchCounterKey.pem -o StrictHostKeyChecking=no ec2-user@${{ secrets.PUBLIC_DNS }} "chmod +x ~/setup.sh && ~/setup.sh"
+        fi
+        
+    - name: Configure application
+      run: |
+        TARGET_DNS="${{ secrets.PUBLIC_DNS }}"
+        if [ -z "$TARGET_DNS" ]; then
+          TARGET_DNS="$PUBLIC_DNS"
+        fi
+        
+        # Create configuration script
+        cat > configure.sh << 'EOF'
+        #!/bin/bash
+        
+        # Update .env file
+        cd /home/ec2-user/TwitchCounter
+        sed -i "s/TWITCH_CHANNEL=.*/TWITCH_CHANNEL=skittishandbus/g" .env
+        sed -i "s/TARGET_WORDS=.*/TARGET_WORDS=fuck,shit,damn/g" .env
+        
+        # Update Nginx configuration
+        sudo sed -i "s/DOMAIN_PLACEHOLDER/DOMAIN_VALUE/g" /etc/nginx/conf.d/twitch-counter.conf
+        sudo nginx -t
+        sudo systemctl reload nginx
+        
+        # Update DDNS script
+        sudo sed -i "s/DOMAIN_PLACEHOLDER/DOMAIN_VALUE/g" /home/ec2-user/update_ddns.sh
+        sudo sed -i "s/PASSWORD_PLACEHOLDER/PASSWORD_VALUE/g" /home/ec2-user/update_ddns.sh
+        
+        # Run DDNS update script
+        /home/ec2-user/update_ddns.sh
+        
+        # Start the application
+        cd /home/ec2-user/TwitchCounter
+        docker-compose up -d
+        
+        echo "Configuration completed!"
+        EOF
+        
+        # Replace placeholders
+        sed -i "s/DOMAIN_VALUE/${{ secrets.NAMECHEAP_DOMAIN }}/g" configure.sh
+        sed -i "s/PASSWORD_VALUE/${{ secrets.NAMECHEAP_DDNS_PASSWORD }}/g" configure.sh
+        
+        # Upload and run configuration script
+        scp -i TwitchCounterKey.pem -o StrictHostKeyChecking=no configure.sh ec2-user@$TARGET_DNS:~/configure.sh
+        ssh -i TwitchCounterKey.pem -o StrictHostKeyChecking=no ec2-user@$TARGET_DNS "chmod +x ~/configure.sh && sudo ~/configure.sh"
+        
+    - name: Output deployment information
+      run: |
+        TARGET_DNS="${{ secrets.PUBLIC_DNS }}"
+        if [ -z "$TARGET_DNS" ]; then
+          TARGET_DNS="$PUBLIC_DNS"
+        fi
+        
+        echo "::notice::Deployment completed successfully!"
+        echo "::notice::Application is running at: http://${{ secrets.NAMECHEAP_DOMAIN }}"
+        echo "::notice::Server address: $TARGET_DNS"
