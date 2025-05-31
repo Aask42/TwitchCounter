@@ -95,7 +95,7 @@ You can run this application in Docker and expose it via ngrok for remote access
 
 2. Create a `.env` file with your configuration:
    ```
-   TWITCH_CHANNEL=asmongold
+   TWITCH_CHANNEL=skittishandbus
    TARGET_WORDS=fuck,shit,damn
    NGROK_AUTHTOKEN=your_ngrok_authtoken
    ```

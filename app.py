@@ -10,7 +10,7 @@ from flask import Flask, render_template, jsonify
 from twitch_word_counter import TwitchWordCounter
 
 # Get environment variables
-TWITCH_CHANNEL = os.environ.get('TWITCH_CHANNEL', 'asmongold')
+TWITCH_CHANNEL = os.environ.get('TWITCH_CHANNEL', 'skittishandbus')
 TARGET_WORDS = os.environ.get('TARGET_WORDS', 'fuck').split(',')
 
 # Initialize Flask app

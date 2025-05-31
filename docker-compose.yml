@@ -6,7 +6,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - TWITCH_CHANNEL=${TWITCH_CHANNEL:-asmongold}
+      - TWITCH_CHANNEL=${TWITCH_CHANNEL:-skittishandbus}
       - TARGET_WORDS=${TARGET_WORDS:-fuck}
     volumes:
       - ./:/app
