@@ -124,9 +124,9 @@ if [ "$DRY_RUN" = false ]; then
   
   # Clean up key pairs
   echo "Cleaning up key pairs..."
+  # Use a more reliable way to get key pairs
   KEY_PAIRS=$(aws ec2 describe-key-pairs \
-    --filters "Name=key-name,Values=TwitchCounterKey*" \
-    --query 'KeyPairs[*].KeyName' \
+    --query "KeyPairs[?starts_with(KeyName, 'TwitchCounterKey')].KeyName" \
     --output text)
   
   if [ -z "$KEY_PAIRS" ]; then

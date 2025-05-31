@@ -47,7 +47,10 @@ jobs:
         
         # Check if key pair exists
         echo "Checking for existing key pair..."
-        KEY_EXISTS=$(aws ec2 describe-key-pairs --key-names TwitchCounterKey 2>/dev/null && echo "true" || echo "false")
+        KEY_PAIRS=$(aws ec2 describe-key-pairs --query "KeyPairs[?KeyName=='TwitchCounterKey'].KeyName" --output text)
+        KEY_EXISTS=$(if [ -n "$KEY_PAIRS" ]; then echo "true"; else echo "false"; fi)
+        echo "Key pair exists: $KEY_EXISTS"
+        
         if [ "$KEY_EXISTS" = "true" ]; then
           echo "Key pair TwitchCounterKey exists."
         else
@@ -97,7 +100,10 @@ jobs:
       if: steps.check_instance.outputs.exists != 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.environment != 'validate')
       run: |
         # Check if key pair exists and handle accordingly
-        KEY_EXISTS=$(aws ec2 describe-key-pairs --key-names TwitchCounterKey 2>/dev/null && echo "true" || echo "false")
+        echo "Checking if key pair exists..."
+        KEY_PAIRS=$(aws ec2 describe-key-pairs --query "KeyPairs[?KeyName=='TwitchCounterKey'].KeyName" --output text)
+        KEY_EXISTS=$(if [ -n "$KEY_PAIRS" ]; then echo "true"; else echo "false"; fi)
+        echo "Key pair exists: $KEY_EXISTS"
         
         if [ "$KEY_EXISTS" = "true" ]; then
           echo "Key pair TwitchCounterKey already exists. Using existing key pair."
