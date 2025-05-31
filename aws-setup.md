@@ -44,11 +44,30 @@ This method uses GitHub Actions to automatically deploy your application to AWS 
    Go to the Actions tab in your GitHub repository to monitor the deployment progress.
 
 5. **After First Deployment**:
-   After the first successful deployment, GitHub Actions will output the instance ID and public DNS. Add these as secrets to your repository:
+   After the first successful deployment, GitHub Actions will output the instance ID, public DNS, and SSH key. Add these as secrets to your repository:
    
    - `INSTANCE_ID`: The EC2 instance ID
    - `PUBLIC_DNS`: The EC2 public DNS name
    - `EC2_SSH_KEY`: The contents of your TwitchCounterKey.pem file
+   
+   The workflow will also output the full SSH key content at the end of the deployment. Save this key to a local file named `TwitchCounterKey.pem` and set the correct permissions:
+   
+   ```bash
+   chmod 400 TwitchCounterKey.pem
+   ```
+   
+   Alternatively, you can use the `local_setup.sh` script to set up your local environment with a new key pair and add it to GitHub secrets:
+   
+   ```bash
+   # Create a new AWS key pair and add to GitHub secrets
+   ./local_setup.sh --create-key --add-to-github
+   
+   # Or create a new key pair with interactive prompts
+   ./local_setup.sh --create-key
+   
+   # Or run with fully interactive prompts
+   ./local_setup.sh
+   ```
 
 6. **Cleaning Up Old Resources**:
    The workflow automatically cleans up instances older than 7 days. To manually trigger a cleanup:
@@ -367,25 +386,33 @@ If you encounter key pair errors like "InvalidKeyPair.Duplicate: The keypair alr
 
 If the workflow gets stuck on "Waiting for SSH to become available..." or fails during SSH operations:
 
-1. **Timeout Handling**:
+1. **SSH Key Management**:
+   - The workflow now outputs the full SSH key content at the end of deployment
+   - You can save this key to a local file named `TwitchCounterKey.pem`
+   - Make sure to set the correct permissions: `chmod 400 TwitchCounterKey.pem`
+   - The key is also saved as a GitHub secret if provided
+
+2. **Timeout Handling**:
    - The workflow now includes a 10-minute timeout for SSH connection
    - It will continue with deployment even if SSH times out, but may fail later
    - Status updates are printed every 30 seconds during the wait
    - Console output is checked to help diagnose boot issues
 
-2. **Retry Mechanism**:
+3. **Retry Mechanism**:
    - All SSH and SCP operations now include automatic retries (8 attempts)
    - Each attempt has a timeout to prevent indefinite hanging
    - Detailed logs are provided for each attempt
    - SSH connection parameters have been optimized for stability
 
-3. **Using the check_instance.sh Script**:
-   - A new script is provided to help troubleshoot instance and SSH issues
+4. **Using the Troubleshooting Scripts**:
+   - Two scripts are provided to help troubleshoot instance and SSH issues:
+     - `check_instance.sh`: General instance status checking
+     - `ssh_troubleshoot.sh`: Specialized SSH connectivity troubleshooting
    - Run `./check_instance.sh` to get detailed information about your instances
-   - Use `./check_instance.sh --wait-for-ssh` to monitor SSH availability
-   - The script checks security groups, instance status, and console output
+   - Run `./ssh_troubleshoot.sh` for comprehensive SSH diagnostics and fixes
+   - See the [SSH Troubleshooting Guide](ssh_troubleshooting.md) for detailed instructions
 
-4. **Typical EC2 Initialization Times**:
+5. **Typical EC2 Initialization Times**:
    - Amazon Linux 2023 instances typically take 1-5 minutes to fully initialize
    - Factors affecting initialization time:
      - Instance type (t2.micro may be slower than larger instances)
@@ -394,11 +421,58 @@ If the workflow gets stuck on "Waiting for SSH to become available..." or fails 
      - First-time boot vs subsequent boots
    - SSH may not be available until initialization is complete
 
-5. **Troubleshooting**:
+6. **Troubleshooting**:
    - Check that port 22 is open in your security group
    - Verify that the instance is fully initialized (check system logs)
    - The monitoring step will show the status of all resources regardless of failures
-   - Use `./check_instance.sh` to get detailed diagnostic information
+   - Use the troubleshooting scripts to diagnose and fix issues
+
+### Local Environment Setup
+
+To set up your local environment for connecting to the EC2 instance, you can use the `local_setup.sh` script:
+
+1. **Basic usage**:
+   ```bash
+   # Download the script
+   curl -O https://raw.githubusercontent.com/Aask42/TwitchCounter/main/local_setup.sh
+   chmod +x local_setup.sh
+   
+   # Run the script with interactive prompts
+   ./local_setup.sh
+   ```
+
+2. **Command line options**:
+   ```bash
+   ./local_setup.sh [--key-file FILE] [--key-secret SECRET] [--create-key] [--add-to-github] [--instance-id ID] [--region REGION]
+   ```
+   
+   - `--key-file FILE`: Path to save the SSH key file (default: TwitchCounterKey.pem)
+   - `--key-secret SECRET`: SSH key content (if not provided, will prompt for input)
+   - `--create-key`: Create a new AWS key pair instead of using existing one
+   - `--add-to-github`: Add the SSH key to GitHub Actions secrets
+   - `--instance-id ID`: EC2 instance ID (if not provided, will try to find it)
+   - `--region REGION`: AWS region (default: us-east-1 or AWS_REGION env var)
+
+3. **What the script does**:
+   - Creates a new AWS key pair or uses an existing SSH key
+   - Can add the SSH key to GitHub Actions secrets automatically
+   - If creating a new key pair, can update your EC2 instance to use it
+   - Sets up SSH config for easy connection to your instance
+   - Creates a .env file with your configuration
+   - Downloads troubleshooting scripts if needed
+   - Finds your EC2 instance if not specified
+   - Provides connection instructions
+
+4. **After running the script**:
+   You can connect to your instance using:
+   ```bash
+   ssh twitch-counter
+   ```
+   
+   Or using the full command:
+   ```bash
+   ssh -i TwitchCounterKey.pem ec2-user@your-instance-public-dns
+   ```
 
 ### Security Group Issues
 

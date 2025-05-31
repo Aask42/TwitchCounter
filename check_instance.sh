@@ -147,6 +147,24 @@ done
 
 if [ "$SSH_ALLOWED" = false ]; then
   echo "  Warning: SSH (port 22) is not explicitly allowed in any security group!"
+  
+  # Ask if user wants to add SSH rule
+  if [ "$INSTANCE_STATE" = "running" ]; then
+    read -p "Would you like to add an SSH rule to allow access from anywhere (0.0.0.0/0)? (y/n): " ADD_SSH_RULE
+    if [[ "$ADD_SSH_RULE" =~ ^[Yy]$ ]]; then
+      for SG_ID in $SG_IDS; do
+        echo "Adding SSH rule to security group $SG_ID..."
+        aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 0.0.0.0/0
+        if [ $? -eq 0 ]; then
+          echo "  SSH rule added successfully!"
+          SSH_ALLOWED=true
+          break
+        else
+          echo "  Failed to add SSH rule. You may need to check your AWS permissions."
+        fi
+      done
+    fi
+  fi
 fi
 
 # Check instance status
@@ -201,7 +219,50 @@ if [ "$WAIT_FOR_SSH" = true ] && [ -n "$PUBLIC_DNS" ]; then
   done
 fi
 
+# Add detailed SSH troubleshooting
+if [ "$INSTANCE_STATE" = "running" ] && [ -n "$PUBLIC_DNS" ]; then
+  echo "Performing detailed SSH troubleshooting..."
+  
+  # Check if we can reach the instance on port 22
+  echo "Testing TCP connectivity to port 22..."
+  nc -zv -w 5 $PUBLIC_DNS 22 2>&1 || echo "  TCP connection to port 22 failed"
+  
+  # Check if the key file exists locally
+  echo "Checking for local key file..."
+  if [ -f "${KEY_NAME}.pem" ]; then
+    echo "  Found local key file: ${KEY_NAME}.pem"
+    
+    # Check key file permissions
+    KEY_PERMS=$(stat -c "%a" "${KEY_NAME}.pem" 2>/dev/null || stat -f "%Lp" "${KEY_NAME}.pem")
+    echo "  Key file permissions: $KEY_PERMS"
+    if [ "$KEY_PERMS" != "400" ]; then
+      echo "  Warning: Key file permissions should be 400 (current: $KEY_PERMS)"
+      read -p "  Would you like to fix the key file permissions? (y/n): " FIX_PERMS
+      if [[ "$FIX_PERMS" =~ ^[Yy]$ ]]; then
+        chmod 400 "${KEY_NAME}.pem"
+        echo "  Permissions updated to 400"
+      fi
+    fi
+  else
+    echo "  Warning: Key file ${KEY_NAME}.pem not found in current directory"
+    echo "  You may need to download the key file from AWS or use a different key"
+  fi
+  
+  # Try a verbose SSH connection
+  if [ -f "${KEY_NAME}.pem" ]; then
+    echo "Attempting SSH connection with verbose output (timeout: 10s)..."
+    timeout 10 ssh -v -i "${KEY_NAME}.pem" -o StrictHostKeyChecking=no -o ConnectTimeout=10 ec2-user@$PUBLIC_DNS "echo SSH test" 2>&1 || echo "  SSH connection failed"
+  fi
+fi
+
 echo "========================="
 echo "Check completed!"
 echo "To SSH into this instance (if it's running and SSH is allowed):"
 echo "ssh -i ${KEY_NAME}.pem ec2-user@$PUBLIC_DNS"
+echo ""
+echo "Common SSH troubleshooting steps:"
+echo "1. Ensure the instance is fully initialized (can take 3-5 minutes)"
+echo "2. Verify security groups allow SSH access from your IP"
+echo "3. Check that your key file has correct permissions (chmod 400)"
+echo "4. If using a bastion host or VPN, ensure proper network routing"
+echo "5. Try connecting with verbose output: ssh -v -i ${KEY_NAME}.pem ec2-user@$PUBLIC_DNS"

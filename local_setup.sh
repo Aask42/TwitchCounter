@@ -8,6 +8,8 @@ SSH_KEY_SECRET=""
 INSTANCE_ID=""
 AWS_REGION=${AWS_REGION:-"us-east-1"}
 GITHUB_REPO="Aask42/TwitchCounter"
+CREATE_NEW_KEY=false
+ADD_TO_GITHUB=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -32,12 +34,22 @@ while [[ $# -gt 0 ]]; do
       GITHUB_REPO="$2"
       shift 2
       ;;
+    --create-key)
+      CREATE_NEW_KEY=true
+      shift
+      ;;
+    --add-to-github)
+      ADD_TO_GITHUB=true
+      shift
+      ;;
     --help|-h)
       echo "Usage: $0 [options]"
       echo ""
       echo "Options:"
       echo "  --key-file FILE     Path to save the SSH key file (default: TwitchCounterKey.pem)"
       echo "  --key-secret SECRET SSH key content (if not provided, will prompt for input)"
+      echo "  --create-key        Create a new AWS key pair instead of using existing one"
+      echo "  --add-to-github     Add the SSH key to GitHub Actions secrets"
       echo "  --instance-id ID    EC2 instance ID (if not provided, will try to find it)"
       echo "  --region REGION     AWS region (default: us-east-1 or AWS_REGION env var)"
       echo "  --repo REPO         GitHub repository (default: Aask42/TwitchCounter)"
@@ -134,35 +146,169 @@ else
   echo ".env file already exists."
 fi
 
-# Create SSH key file
+# Handle SSH key
 echo "Setting up SSH key..."
 
-if [ -z "$SSH_KEY_SECRET" ]; then
-  echo "No SSH key provided via command line."
+# Function to add key to GitHub secrets
+add_to_github_secrets() {
+  local KEY_CONTENT="$1"
+  local REPO_PATH="$2"
   
-  if [ -f "$SSH_KEY_FILE" ]; then
-    echo "SSH key file already exists at $SSH_KEY_FILE."
-    read -p "Do you want to overwrite it? (y/n): " OVERWRITE
-    if [[ ! "$OVERWRITE" =~ ^[Yy]$ ]]; then
-      echo "Keeping existing SSH key file."
-    else
-      echo "Please paste your SSH key content below (Ctrl+D when finished):"
-      SSH_KEY_CONTENT=$(cat)
-      echo "$SSH_KEY_CONTENT" > "$SSH_KEY_FILE"
-      chmod 400 "$SSH_KEY_FILE"
-      echo "SSH key saved to $SSH_KEY_FILE with proper permissions."
+  echo ""
+  echo "To add this key to GitHub Actions secrets:"
+  echo "----------------------------------------"
+  echo "1. Go to your GitHub repository: https://github.com/$GITHUB_REPO"
+  echo "2. Navigate to Settings > Secrets and variables > Actions"
+  echo "3. Click 'New repository secret'"
+  echo "4. Name: EC2_SSH_KEY"
+  echo "5. Value: Copy and paste the entire content of $SSH_KEY_FILE"
+  echo ""
+  
+  # Check if GitHub CLI is installed
+  if command_exists gh; then
+    echo "GitHub CLI detected. You can add the secret with this command:"
+    echo ""
+    echo "gh secret set EC2_SSH_KEY -b\"$(cat $SSH_KEY_FILE)\" --repo $GITHUB_REPO"
+    echo ""
+    
+    read -p "Would you like to add the secret using GitHub CLI now? (y/n): " ADD_SECRET
+    if [[ "$ADD_SECRET" =~ ^[Yy]$ ]]; then
+      # Check if logged in to GitHub CLI
+      if ! gh auth status &>/dev/null; then
+        echo "You need to log in to GitHub CLI first."
+        gh auth login
+      fi
+      
+      # Add the secret
+      if gh secret set EC2_SSH_KEY -b"$(cat $SSH_KEY_FILE)" --repo $GITHUB_REPO; then
+        echo "Secret added successfully!"
+      else
+        echo "Failed to add secret. Please add it manually using the steps above."
+      fi
     fi
   else
-    echo "Please paste your SSH key content below (Ctrl+D when finished):"
+    echo "For automated addition, install GitHub CLI (gh) from: https://cli.github.com/"
+    echo "Then run: gh secret set EC2_SSH_KEY -b\"$(cat $SSH_KEY_FILE)\" --repo $GITHUB_REPO"
+  fi
+}
+
+# Function to create a new key pair
+create_new_key_pair() {
+  local KEY_NAME="TwitchCounterKey-$(date +%s)"
+  echo "Creating new key pair: $KEY_NAME"
+  
+  if command_exists aws; then
+    # Create new key pair using AWS CLI
+    KEY_MATERIAL=$(aws ec2 create-key-pair --key-name "$KEY_NAME" --query 'KeyMaterial' --output text 2>/dev/null)
+    
+    if [ $? -eq 0 ] && [ -n "$KEY_MATERIAL" ]; then
+      echo "$KEY_MATERIAL" > "$SSH_KEY_FILE"
+      chmod 400 "$SSH_KEY_FILE"
+      echo "New SSH key created and saved to $SSH_KEY_FILE with proper permissions."
+      
+      # Add to GitHub if requested or prompt
+      if [ "$ADD_TO_GITHUB" = true ]; then
+        add_to_github_secrets "$KEY_MATERIAL" "$GITHUB_REPO"
+      else
+        read -p "Would you like to add this key to GitHub Actions secrets? (y/n): " ADD_TO_GH
+        if [[ "$ADD_TO_GH" =~ ^[Yy]$ ]]; then
+          add_to_github_secrets "$KEY_MATERIAL" "$GITHUB_REPO"
+        fi
+      fi
+      
+      # If we have an instance ID, update it to use the new key
+      if [ -n "$INSTANCE_ID" ]; then
+        echo "Updating instance to use the new key pair..."
+        echo "Note: This requires stopping the instance temporarily."
+        
+        read -p "Do you want to stop the instance and update its key pair? (y/n): " UPDATE_KEY
+        if [[ "$UPDATE_KEY" =~ ^[Yy]$ ]]; then
+          # Stop the instance
+          echo "Stopping instance $INSTANCE_ID..."
+          aws ec2 stop-instances --instance-ids "$INSTANCE_ID"
+          
+          # Wait for the instance to stop
+          echo "Waiting for instance to stop..."
+          aws ec2 wait instance-stopped --instance-ids "$INSTANCE_ID"
+          
+          # Update the key pair
+          echo "Updating instance key pair..."
+          aws ec2 modify-instance-attribute --instance-id "$INSTANCE_ID" --key-name "$KEY_NAME"
+          
+          # Start the instance
+          echo "Starting instance $INSTANCE_ID..."
+          aws ec2 start-instances --instance-ids "$INSTANCE_ID"
+          
+          # Wait for the instance to start
+          echo "Waiting for instance to start..."
+          aws ec2 wait instance-running --instance-ids "$INSTANCE_ID"
+          
+          # Get the new public DNS
+          PUBLIC_DNS=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].PublicDnsName' --output text)
+          echo "Instance restarted with new key pair. Public DNS: $PUBLIC_DNS"
+        else
+          echo "Skipping instance key pair update."
+          echo "Note: You won't be able to connect to the instance with this new key until you update the instance."
+        fi
+      fi
+      
+      return 0
+    else
+      echo "Failed to create new key pair using AWS CLI."
+      return 1
+    fi
+  else
+    echo "AWS CLI not available. Cannot create new key pair."
+    return 1
+  fi
+}
+
+# Check if we should use existing key or create a new one
+if [ "$CREATE_NEW_KEY" = true ]; then
+  # Create new key pair
+  create_new_key_pair
+elif [ -n "$SSH_KEY_SECRET" ]; then
+  # Use provided key
+  echo "$SSH_KEY_SECRET" > "$SSH_KEY_FILE"
+  chmod 400 "$SSH_KEY_FILE"
+  echo "SSH key saved to $SSH_KEY_FILE with proper permissions."
+  
+  # Add to GitHub if requested
+  if [ "$ADD_TO_GITHUB" = true ]; then
+    add_to_github_secrets "$SSH_KEY_SECRET" "$GITHUB_REPO"
+  fi
+elif [ -f "$SSH_KEY_FILE" ]; then
+  # Key file exists
+  echo "SSH key file already exists at $SSH_KEY_FILE."
+  read -p "Do you want to create a new key pair instead? (y/n): " CREATE_NEW
+  if [[ "$CREATE_NEW" =~ ^[Yy]$ ]]; then
+    create_new_key_pair
+  else
+    echo "Keeping existing SSH key file."
+    
+    # Add to GitHub if requested
+    if [ "$ADD_TO_GITHUB" = true ]; then
+      add_to_github_secrets "$(cat $SSH_KEY_FILE)" "$GITHUB_REPO"
+    fi
+  fi
+else
+  # No key file exists
+  echo "No SSH key file found."
+  read -p "Do you want to create a new key pair? (y/n): " CREATE_NEW
+  if [[ "$CREATE_NEW" =~ ^[Yy]$ ]]; then
+    create_new_key_pair
+  else
+    echo "Please paste your existing SSH key content below (Ctrl+D when finished):"
     SSH_KEY_CONTENT=$(cat)
     echo "$SSH_KEY_CONTENT" > "$SSH_KEY_FILE"
     chmod 400 "$SSH_KEY_FILE"
     echo "SSH key saved to $SSH_KEY_FILE with proper permissions."
+    
+    # Add to GitHub if requested
+    if [ "$ADD_TO_GITHUB" = true ]; then
+      add_to_github_secrets "$SSH_KEY_CONTENT" "$GITHUB_REPO"
+    fi
   fi
-else
-  echo "$SSH_KEY_SECRET" > "$SSH_KEY_FILE"
-  chmod 400 "$SSH_KEY_FILE"
-  echo "SSH key saved to $SSH_KEY_FILE with proper permissions."
 fi
 
 # Find instance if not provided

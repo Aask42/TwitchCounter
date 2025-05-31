@@ -121,13 +121,50 @@ For instructions on deploying this application to an AWS free tier server with a
 
 For help with setting up GitHub secrets and environment variables for automated deployment, see the [GitHub Secrets Guide](github-secrets-guide.md).
 
-### Deployment Scripts
+For troubleshooting SSH connectivity issues, see the [SSH Troubleshooting Guide](ssh_troubleshooting.md).
+
+### Deployment and Setup Scripts
 
 The repository includes several scripts to help with AWS deployment and management:
 
 - **setup.sh**: Sets up the application on an EC2 instance, checking for existing deployments first
+- **local_setup.sh**: Sets up your local environment for connecting to the EC2 instance
 - **cleanup_aws.sh**: Cleans up AWS resources (instances, security groups, key pairs)
 - **check_instance.sh**: Checks the status of EC2 instances and helps troubleshoot connectivity issues
+- **ssh_troubleshoot.sh**: Provides comprehensive SSH connectivity diagnostics and fixes
+
+#### Using local_setup.sh
+
+The `local_setup.sh` script helps you set up your local environment for connecting to the EC2 instance:
+
+```bash
+# Run with interactive prompts
+./local_setup.sh
+
+# Create a new AWS key pair and add to GitHub secrets
+./local_setup.sh --create-key --add-to-github
+
+# Create a new AWS key pair (interactive prompts)
+./local_setup.sh --create-key
+
+# Add existing key to GitHub secrets
+./local_setup.sh --add-to-github
+
+# Provide existing SSH key content directly
+./local_setup.sh --key-secret "$(cat path/to/your/key.pem)"
+
+# Specify instance ID and region
+./local_setup.sh --instance-id i-1234567890abcdef0 --region us-west-2
+```
+
+This script:
+- Creates a new AWS key pair or uses an existing SSH key
+- Can add the SSH key to GitHub Actions secrets automatically
+- If creating a new key pair, can update your EC2 instance to use it
+- Sets up SSH config for easy connection to your instance
+- Creates a .env file with your configuration
+- Downloads troubleshooting scripts if needed
+- Provides connection instructions
 
 #### Using check_instance.sh
 
@@ -150,6 +187,28 @@ This script provides detailed information about your instance, including:
 - Security group rules (checking if SSH is allowed)
 - Console output for troubleshooting
 - SSH connection instructions
+
+#### Using ssh_troubleshoot.sh
+
+The `ssh_troubleshoot.sh` script provides comprehensive diagnostics and fixes for SSH connectivity issues:
+
+```bash
+# Run with interactive prompts
+./ssh_troubleshoot.sh
+
+# Check a specific instance with a specific key file
+./ssh_troubleshoot.sh --instance-id i-1234567890abcdef0 --key-file TwitchCounterKey.pem
+
+# Automatically fix common issues
+./ssh_troubleshoot.sh --fix
+```
+
+This script helps diagnose and fix common SSH issues:
+- Locates and verifies SSH key files
+- Checks and fixes key file permissions
+- Verifies security group rules for SSH access
+- Tests network connectivity to the instance
+- Provides detailed SSH connection diagnostics
 
 ## License
 
