@@ -121,6 +121,36 @@ For instructions on deploying this application to an AWS free tier server with a
 
 For help with setting up GitHub secrets and environment variables for automated deployment, see the [GitHub Secrets Guide](github-secrets-guide.md).
 
+### Deployment Scripts
+
+The repository includes several scripts to help with AWS deployment and management:
+
+- **setup.sh**: Sets up the application on an EC2 instance, checking for existing deployments first
+- **cleanup_aws.sh**: Cleans up AWS resources (instances, security groups, key pairs)
+- **check_instance.sh**: Checks the status of EC2 instances and helps troubleshoot connectivity issues
+
+#### Using check_instance.sh
+
+The `check_instance.sh` script helps you check the status of your EC2 instances and troubleshoot connectivity issues:
+
+```bash
+# Check all instances with the TwitchCounter tag
+./check_instance.sh
+
+# Check a specific instance
+./check_instance.sh --instance-id i-1234567890abcdef0
+
+# Wait for SSH to become available (useful for new instances)
+./check_instance.sh --wait-for-ssh --timeout 600
+```
+
+This script provides detailed information about your instance, including:
+- Instance state and uptime
+- Public and private IP addresses
+- Security group rules (checking if SSH is allowed)
+- Console output for troubleshooting
+- SSH connection instructions
+
 ## License
 
 MIT

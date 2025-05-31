@@ -185,7 +185,7 @@ jobs:
         
         # Wait for SSH to be available with timeout
         echo "Waiting for SSH to become available..."
-        TIMEOUT=300  # 5 minutes timeout
+        TIMEOUT=600  # 10 minutes timeout
         START_TIME=$(date +%s)
         
         while true; do
@@ -201,6 +201,16 @@ jobs:
           if [ $ELAPSED_TIME -gt $TIMEOUT ]; then
             echo "::warning::Timed out waiting for SSH to become available after $TIMEOUT seconds."
             echo "::warning::This could be due to security group rules, instance initialization, or network issues."
+            
+            # Get detailed instance information for troubleshooting
+            echo "Instance details:"
+            aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].[State.Name,PublicDnsName,PublicIpAddress,LaunchTime]' --output table
+            
+            # Check security group rules
+            echo "Security group rules:"
+            SG_ID=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' --output text)
+            aws ec2 describe-security-group-rules --filters "Name=group-id,Values=$SG_ID" --query 'SecurityGroupRules[?IpProtocol==`tcp` && FromPort==`22`].[CidrIpv4,ToPort]' --output table
+            
             echo "::warning::Will attempt to continue anyway, but SSH operations may fail."
             break
           fi
@@ -212,6 +222,10 @@ jobs:
             aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].State.Name' --output text
             echo "Testing connection to $PUBLIC_DNS:22..."
             nc -v -z -w 5 $PUBLIC_DNS 22 || echo "Connection failed"
+            
+            # Check system log for boot issues
+            echo "Checking instance system log (last 10 lines):"
+            aws ec2 get-console-output --instance-id $INSTANCE_ID --latest --query 'Output' --output text | tail -10 || echo "No console output available yet"
           fi
           
           sleep 5
@@ -314,18 +328,27 @@ jobs:
         function retry_ssh {
           local host=$1
           local command=$2
-          local max_attempts=5
-          local timeout=60
+          local max_attempts=8
+          local timeout=120
           local attempt=1
           
           while [ $attempt -le $max_attempts ]; do
             echo "SSH attempt $attempt of $max_attempts..."
-            if timeout $timeout ssh -i TwitchCounterKey.pem -o StrictHostKeyChecking=no -o ConnectTimeout=10 ec2-user@$host "$command"; then
+            if timeout $timeout ssh -i TwitchCounterKey.pem -o StrictHostKeyChecking=no -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 ec2-user@$host "$command"; then
               echo "SSH command succeeded!"
               return 0
             fi
-            echo "SSH attempt failed. Waiting before retry..."
-            sleep 10
+            
+            # Get more information about the failure
+            echo "SSH attempt failed. Checking instance status..."
+            aws ec2 describe-instances --instance-ids ${{ env.INSTANCE_ID || secrets.INSTANCE_ID }} --query 'Reservations[0].Instances[0].State.Name' --output text
+            
+            # Try a simple connection test
+            echo "Testing basic SSH connectivity..."
+            timeout 10 ssh -i TwitchCounterKey.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 -v ec2-user@$host "echo Connection test" || echo "Basic connection test failed"
+            
+            echo "Waiting before retry..."
+            sleep 15
             attempt=$((attempt + 1))
           done
           
@@ -448,9 +471,28 @@ jobs:
           TARGET_DNS="$PUBLIC_DNS"
         fi
         
+        INSTANCE_ID="${{ env.INSTANCE_ID || secrets.INSTANCE_ID }}"
+        
         echo "::notice::Deployment completed successfully!"
         echo "::notice::Application is running at: http://${{ secrets.NAMECHEAP_DOMAIN }}"
         echo "::notice::Server address: $TARGET_DNS"
+        
+        # Get instance details
+        echo "Instance Details:"
+        echo "================="
+        aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].[InstanceId,InstanceType,LaunchTime,State.Name,PublicDnsName,PublicIpAddress]' --output table
+        
+        # Check if SSH is accessible
+        echo "Testing SSH connectivity..."
+        if timeout 10 ssh -i TwitchCounterKey.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ec2-user@$TARGET_DNS "echo SSH is working"; then
+          echo "::notice::SSH connection is working properly."
+        else
+          echo "::warning::SSH connection is not working yet. The instance may still be initializing."
+          echo "::warning::Typical EC2 initialization time is 3-5 minutes, but can take up to 10 minutes in some cases."
+          echo "::warning::You can try connecting manually after a few minutes using: ssh -i TwitchCounterKey.pem ec2-user@$TARGET_DNS"
+        fi
+        
+        echo "::notice::To check application status: ssh -i TwitchCounterKey.pem ec2-user@$TARGET_DNS 'cd /home/ec2-user/TwitchCounter && docker-compose ps'"
         
     - name: Monitor and report deployment status
       if: always()

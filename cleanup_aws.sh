@@ -67,7 +67,7 @@ echo "Cutoff date: $CUTOFF_DATE"
 
 # Get all instances with the specified tag
 INSTANCES=$(aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running,stopped" \
+  --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running,stopped,pending,stopping,shutting-down" \
   --query 'Reservations[*].Instances[*].[InstanceId,LaunchTime,Tags[?Key==`Name`].Value | [0],State.Name]' \
   --output text)
 
@@ -81,16 +81,36 @@ echo "Found instances:"
 echo "----------------"
 INSTANCE_IDS_TO_TERMINATE=()
 
+# Get all instances with detailed information
+echo "Fetching detailed instance information..."
+DETAILED_INSTANCES=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=$TAG_NAME" \
+  --query 'Reservations[*].Instances[*].[InstanceId,LaunchTime,State.Name,PublicDnsName,PublicIpAddress]' \
+  --output table)
+
+echo "$DETAILED_INSTANCES"
+echo "----------------"
+
 while read -r INSTANCE_ID LAUNCH_TIME NAME STATE; do
   # Convert launch time to date only for comparison
   LAUNCH_DATE=$(echo $LAUNCH_TIME | cut -d'T' -f1)
   
+  # Get additional instance details
+  UPTIME_SECONDS=$(( $(date +%s) - $(date -d "$LAUNCH_TIME" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "$LAUNCH_TIME" +%s) ))
+  UPTIME_HOURS=$(( UPTIME_SECONDS / 3600 ))
+  
   # Check if the instance is older than the cutoff date
   if [[ "$LAUNCH_DATE" < "$CUTOFF_DATE" || "$FORCE" = true ]]; then
-    echo "Instance $INSTANCE_ID ($NAME) - Launch date: $LAUNCH_DATE, State: $STATE - WILL BE TERMINATED"
+    echo "Instance $INSTANCE_ID ($NAME) - Launch date: $LAUNCH_DATE, State: $STATE, Uptime: ~${UPTIME_HOURS}h - WILL BE TERMINATED"
     INSTANCE_IDS_TO_TERMINATE+=("$INSTANCE_ID")
   else
-    echo "Instance $INSTANCE_ID ($NAME) - Launch date: $LAUNCH_DATE, State: $STATE - KEEPING"
+    echo "Instance $INSTANCE_ID ($NAME) - Launch date: $LAUNCH_DATE, State: $STATE, Uptime: ~${UPTIME_HOURS}h - KEEPING"
+  fi
+  
+  # If instance is in pending state, provide additional information
+  if [[ "$STATE" == "pending" ]]; then
+    echo "  Note: This instance is still initializing. Typical initialization time is 3-5 minutes."
+    echo "  If it's been pending for more than 10 minutes, there might be an issue with the instance."
   fi
 done <<< "$INSTANCES"
 
@@ -104,15 +124,39 @@ fi
 if [ "$DRY_RUN" = false ]; then
   echo "Terminating instances..."
   for INSTANCE_ID in "${INSTANCE_IDS_TO_TERMINATE[@]}"; do
-    echo "Terminating $INSTANCE_ID..."
-    aws ec2 terminate-instances --instance-ids "$INSTANCE_ID"
+    # Check current instance state
+    CURRENT_STATE=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo "unknown")
+    echo "Terminating $INSTANCE_ID (current state: $CURRENT_STATE)..."
+    
+    # If instance is in pending state, provide additional information
+    if [[ "$CURRENT_STATE" == "pending" ]]; then
+      echo "  Note: This instance is still initializing. Terminating a pending instance is allowed but may take longer."
+    fi
+    
+    # Attempt to terminate the instance
+    TERMINATION_RESULT=$(aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" 2>&1)
+    if [[ $? -eq 0 ]]; then
+      echo "  Termination initiated successfully"
+    else
+      echo "  Error initiating termination: $TERMINATION_RESULT"
+      echo "  Will continue with other cleanup tasks"
+    fi
   done
   
-  # Wait for instances to terminate
-  echo "Waiting for instances to terminate..."
+  # Wait for instances to terminate with timeout
+  echo "Waiting for instances to terminate (timeout: 5 minutes)..."
   for INSTANCE_ID in "${INSTANCE_IDS_TO_TERMINATE[@]}"; do
-    aws ec2 wait instance-terminated --instance-ids "$INSTANCE_ID"
-    echo "$INSTANCE_ID terminated"
+    echo "Waiting for $INSTANCE_ID to terminate..."
+    
+    # Use a timeout for the wait command
+    timeout 300 aws ec2 wait instance-terminated --instance-ids "$INSTANCE_ID"
+    if [[ $? -eq 0 ]]; then
+      echo "  $INSTANCE_ID terminated successfully"
+    else
+      FINAL_STATE=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo "unknown")
+      echo "  Timed out waiting for $INSTANCE_ID to terminate. Current state: $FINAL_STATE"
+      echo "  The instance may still be in the process of terminating."
+    fi
   done
   
   # Clean up security groups

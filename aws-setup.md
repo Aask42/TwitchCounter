@@ -119,7 +119,13 @@ The setup script:
 4. Sets up a cron job to update DDNS every 10 minutes
 5. Clones the repository and configures the application
 6. Sets up Nginx as a reverse proxy
-7. Starts the application
+7. Checks for existing Docker containers and stops them if found
+8. Starts the application
+
+The script now includes a check for existing deployments, making it safer to run multiple times or as part of an update process. If it detects that the application is already running, it will:
+1. Stop the existing containers gracefully
+2. Update the repository and configuration
+3. Restart the application with the new version
 
 ## Option 3: Manual Deployment with AWS CLI
 
@@ -287,6 +293,43 @@ If you need to clean up AWS resources manually:
    ./cleanup_aws.sh --force --delete-all-keys --delete-all-sg
    ```
 
+### Using the Instance Status Check Script
+
+The `check_instance.sh` script helps you diagnose EC2 instance issues and monitor SSH availability:
+
+1. **Basic usage**:
+  ```bash
+  # Download the script
+  curl -O https://raw.githubusercontent.com/Aask42/TwitchCounter/main/check_instance.sh
+  chmod +x check_instance.sh
+  
+  # Run the script to check all TwitchCounter instances
+  ./check_instance.sh
+  ```
+
+2. **Checking a specific instance**:
+  ```bash
+  ./check_instance.sh --instance-id i-1234567890abcdef0
+  ```
+
+3. **Waiting for SSH to become available**:
+  ```bash
+  ./check_instance.sh --wait-for-ssh --timeout 600
+  ```
+
+4. **Specifying a different region**:
+  ```bash
+  ./check_instance.sh --region us-west-2
+  ```
+
+5. **What the script provides**:
+  - Instance state, type, and uptime
+  - Public and private IP addresses
+  - Security group rules (checking if SSH is allowed)
+  - Instance and system status checks
+  - Console output for troubleshooting
+  - SSH connection testing and instructions
+
 ### Key Pair Issues
 
 If you encounter key pair errors like "InvalidKeyPair.Duplicate: The keypair already exists":
@@ -325,19 +368,37 @@ If you encounter key pair errors like "InvalidKeyPair.Duplicate: The keypair alr
 If the workflow gets stuck on "Waiting for SSH to become available..." or fails during SSH operations:
 
 1. **Timeout Handling**:
-   - The workflow now includes a 5-minute timeout for SSH connection
+   - The workflow now includes a 10-minute timeout for SSH connection
    - It will continue with deployment even if SSH times out, but may fail later
    - Status updates are printed every 30 seconds during the wait
+   - Console output is checked to help diagnose boot issues
 
 2. **Retry Mechanism**:
-   - All SSH and SCP operations now include automatic retries (5 attempts)
+   - All SSH and SCP operations now include automatic retries (8 attempts)
    - Each attempt has a timeout to prevent indefinite hanging
    - Detailed logs are provided for each attempt
+   - SSH connection parameters have been optimized for stability
 
-3. **Troubleshooting**:
+3. **Using the check_instance.sh Script**:
+   - A new script is provided to help troubleshoot instance and SSH issues
+   - Run `./check_instance.sh` to get detailed information about your instances
+   - Use `./check_instance.sh --wait-for-ssh` to monitor SSH availability
+   - The script checks security groups, instance status, and console output
+
+4. **Typical EC2 Initialization Times**:
+   - Amazon Linux 2023 instances typically take 1-5 minutes to fully initialize
+   - Factors affecting initialization time:
+     - Instance type (t2.micro may be slower than larger instances)
+     - AMI size and initialization scripts
+     - Region and availability zone load
+     - First-time boot vs subsequent boots
+   - SSH may not be available until initialization is complete
+
+5. **Troubleshooting**:
    - Check that port 22 is open in your security group
    - Verify that the instance is fully initialized (check system logs)
    - The monitoring step will show the status of all resources regardless of failures
+   - Use `./check_instance.sh` to get detailed diagnostic information
 
 ### Security Group Issues
 

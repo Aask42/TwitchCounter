@@ -107,6 +107,17 @@ systemctl reload nginx
 echo "Updating DDNS..."
 /home/ec2-user/update_ddns.sh
 
+# Check if the application is already running
+echo "Checking for existing application..."
+if docker ps | grep -q "twitchcounter"; then
+  echo "Existing application found. Stopping containers..."
+  cd /home/ec2-user/TwitchCounter
+  docker-compose down
+  echo "Containers stopped."
+else
+  echo "No existing application found."
+fi
+
 # Start the application
 echo "Starting the application..."
 cd /home/ec2-user/TwitchCounter
