@@ -58,6 +58,17 @@ This method uses GitHub Actions to automatically deploy your application to AWS 
    - Click "Run workflow"
    - Select "cleanup" from the environment dropdown
    - Click "Run workflow"
+   
+7. **Validating Your Setup**:
+  To validate your AWS setup without creating any resources:
+  
+  - Go to the Actions tab in your GitHub repository
+  - Select the "Deploy to AWS" workflow
+  - Click "Run workflow"
+  - Select "validate" from the environment dropdown
+  - Click "Run workflow"
+  
+  This will check your AWS credentials, existing resources, and configuration without making any changes.
 
 ### How It Works
 
@@ -292,3 +303,12 @@ If you encounter key pair errors like "InvalidKeyPair.Duplicate: The keypair alr
    - The workflow will automatically handle duplicate key pairs by:
      - Using the existing key pair if the key material is available in secrets
      - Creating a new key pair with a timestamp suffix if needed
+   
+4. **Using the Validation Option**:
+   - Run the workflow with the "validate" environment to check your setup:
+     ```bash
+     # In the GitHub Actions tab, select "Deploy to AWS" workflow
+     # Click "Run workflow"
+     # Select "validate" from the dropdown
+     ```
+   - This will check for existing key pairs and other resources without making changes
