@@ -48,6 +48,15 @@ This method uses GitHub Actions to automatically deploy your application to AWS 
    - `PUBLIC_DNS`: The EC2 public DNS name
    - `EC2_SSH_KEY`: The contents of your TwitchCounterKey.pem file
 
+6. **Cleaning Up Old Resources**:
+   The workflow automatically cleans up instances older than 7 days. To manually trigger a cleanup:
+   
+   - Go to the Actions tab in your GitHub repository
+   - Select the "Deploy to AWS" workflow
+   - Click "Run workflow"
+   - Select "cleanup" from the environment dropdown
+   - Click "Run workflow"
+
 ### How It Works
 
 The GitHub Actions workflow:
@@ -216,3 +225,35 @@ If Nginx is not working correctly:
 3. **Check Nginx logs**:
    ```bash
    sudo tail -f /var/log/nginx/error.log
+   ```
+
+### Cleaning Up AWS Resources
+
+If you need to clean up AWS resources manually:
+
+1. **Using the cleanup script**:
+  ```bash
+  # Download the cleanup script
+  curl -O https://raw.githubusercontent.com/Aask42/TwitchCounter/main/cleanup_aws.sh
+  chmod +x cleanup_aws.sh
+  
+  # Run with AWS CLI configured
+  ./cleanup_aws.sh
+  ```
+
+2. **Options for the cleanup script**:
+  - `--dry-run`: Show what would be deleted without actually deleting
+  - `--force`: Delete all instances regardless of age
+  - `--days-old N`: Delete instances older than N days (default: 7)
+  - `--tag-name NAME`: Delete instances with this tag name (default: TwitchCounter)
+
+3. **Example usage**:
+  ```bash
+  # Dry run to see what would be deleted
+  ./cleanup_aws.sh --dry-run
+  
+  # Force delete all TwitchCounter instances
+  ./cleanup_aws.sh --force
+  
+  # Delete instances older than 14 days
+  ./cleanup_aws.sh --days-old 14

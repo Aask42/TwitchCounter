@@ -9,6 +9,11 @@ on:
         description: 'Environment to deploy to'
         required: true
         default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+          - cleanup
 
 jobs:
   deploy:
@@ -29,6 +34,19 @@ jobs:
       run: |
         echo "INSTANCE_ID=${{ secrets.INSTANCE_ID }}" >> $GITHUB_ENV
         echo "PUBLIC_DNS=${{ secrets.PUBLIC_DNS }}" >> $GITHUB_ENV
+        
+    - name: Clean up old AWS resources
+      run: |
+        chmod +x ./cleanup_aws.sh
+        # Run cleanup with force flag if explicitly requested via workflow_dispatch
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.environment }}" = "cleanup" ]; then
+          echo "Running forced cleanup..."
+          ./cleanup_aws.sh --force
+        else
+          # Otherwise just clean up instances older than 7 days
+          echo "Running standard cleanup..."
+          ./cleanup_aws.sh
+        fi
         
     - name: Check if instance exists
       id: check_instance
