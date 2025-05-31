@@ -183,9 +183,37 @@ jobs:
         echo "::warning::INSTANCE_ID: $INSTANCE_ID"
         echo "::warning::PUBLIC_DNS: $PUBLIC_DNS"
         
-        # Wait for SSH to be available
+        # Wait for SSH to be available with timeout
         echo "Waiting for SSH to become available..."
-        while ! nc -z $PUBLIC_DNS 22; do
+        TIMEOUT=300  # 5 minutes timeout
+        START_TIME=$(date +%s)
+        
+        while true; do
+          # Check if SSH is available
+          if nc -z -w 5 $PUBLIC_DNS 22; then
+            echo "SSH is now available!"
+            break
+          fi
+          
+          # Check if we've timed out
+          CURRENT_TIME=$(date +%s)
+          ELAPSED_TIME=$((CURRENT_TIME - START_TIME))
+          if [ $ELAPSED_TIME -gt $TIMEOUT ]; then
+            echo "::warning::Timed out waiting for SSH to become available after $TIMEOUT seconds."
+            echo "::warning::This could be due to security group rules, instance initialization, or network issues."
+            echo "::warning::Will attempt to continue anyway, but SSH operations may fail."
+            break
+          fi
+          
+          # Print status update every 30 seconds
+          if [ $((ELAPSED_TIME % 30)) -eq 0 ]; then
+            echo "Still waiting for SSH... ($ELAPSED_TIME seconds elapsed, timeout at $TIMEOUT seconds)"
+            echo "Checking instance status..."
+            aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].State.Name' --output text
+            echo "Testing connection to $PUBLIC_DNS:22..."
+            nc -v -z -w 5 $PUBLIC_DNS 22 || echo "Connection failed"
+          fi
+          
           sleep 5
         done
         
@@ -282,14 +310,65 @@ jobs:
     - name: Upload and run setup script
       if: github.event_name != 'workflow_dispatch' || github.event.inputs.environment != 'validate'
       run: |
+        # Function to retry SSH commands with timeout
+        function retry_ssh {
+          local host=$1
+          local command=$2
+          local max_attempts=5
+          local timeout=60
+          local attempt=1
+          
+          while [ $attempt -le $max_attempts ]; do
+            echo "SSH attempt $attempt of $max_attempts..."
+            if timeout $timeout ssh -i TwitchCounterKey.pem -o StrictHostKeyChecking=no -o ConnectTimeout=10 ec2-user@$host "$command"; then
+              echo "SSH command succeeded!"
+              return 0
+            fi
+            echo "SSH attempt failed. Waiting before retry..."
+            sleep 10
+            attempt=$((attempt + 1))
+          done
+          
+          echo "::error::Failed to execute SSH command after $max_attempts attempts."
+          return 1
+        }
+        
         if [ "${{ steps.check_instance.outputs.exists }}" != "true" ]; then
           # For new instance
-          scp -i TwitchCounterKey.pem -o StrictHostKeyChecking=no setup.sh ec2-user@$PUBLIC_DNS:~/setup.sh
-          ssh -i TwitchCounterKey.pem -o StrictHostKeyChecking=no ec2-user@$PUBLIC_DNS "chmod +x ~/setup.sh && ~/setup.sh"
+          echo "Uploading setup script to new instance..."
+          for i in {1..5}; do
+            echo "SCP attempt $i of 5..."
+            if scp -i TwitchCounterKey.pem -o StrictHostKeyChecking=no -o ConnectTimeout=10 setup.sh ec2-user@$PUBLIC_DNS:~/setup.sh; then
+              echo "SCP succeeded!"
+              break
+            fi
+            echo "SCP failed. Waiting before retry..."
+            sleep 10
+            if [ $i -eq 5 ]; then
+              echo "::warning::Failed to upload setup script after 5 attempts. Will try to create it directly via SSH."
+            fi
+          done
+          
+          echo "Running setup script on new instance..."
+          retry_ssh $PUBLIC_DNS "chmod +x ~/setup.sh && ~/setup.sh"
         else
           # For existing instance
-          scp -i TwitchCounterKey.pem -o StrictHostKeyChecking=no setup.sh ec2-user@${{ secrets.PUBLIC_DNS }}:~/setup.sh
-          ssh -i TwitchCounterKey.pem -o StrictHostKeyChecking=no ec2-user@${{ secrets.PUBLIC_DNS }} "chmod +x ~/setup.sh && ~/setup.sh"
+          echo "Uploading setup script to existing instance..."
+          for i in {1..5}; do
+            echo "SCP attempt $i of 5..."
+            if scp -i TwitchCounterKey.pem -o StrictHostKeyChecking=no -o ConnectTimeout=10 setup.sh ec2-user@${{ secrets.PUBLIC_DNS }}:~/setup.sh; then
+              echo "SCP succeeded!"
+              break
+            fi
+            echo "SCP failed. Waiting before retry..."
+            sleep 10
+            if [ $i -eq 5 ]; then
+              echo "::warning::Failed to upload setup script after 5 attempts. Will try to create it directly via SSH."
+            fi
+          done
+          
+          echo "Running setup script on existing instance..."
+          retry_ssh ${{ secrets.PUBLIC_DNS }} "chmod +x ~/setup.sh && ~/setup.sh"
         fi
         
     - name: Configure application
@@ -333,8 +412,33 @@ jobs:
         sed -i "s/PASSWORD_VALUE/${{ secrets.NAMECHEAP_DDNS_PASSWORD }}/g" configure.sh
         
         # Upload and run configuration script
-        scp -i TwitchCounterKey.pem -o StrictHostKeyChecking=no configure.sh ec2-user@$TARGET_DNS:~/configure.sh
-        ssh -i TwitchCounterKey.pem -o StrictHostKeyChecking=no ec2-user@$TARGET_DNS "chmod +x ~/configure.sh && sudo ~/configure.sh"
+        echo "Uploading configuration script..."
+        for i in {1..5}; do
+          echo "SCP attempt $i of 5..."
+          if scp -i TwitchCounterKey.pem -o StrictHostKeyChecking=no -o ConnectTimeout=10 configure.sh ec2-user@$TARGET_DNS:~/configure.sh; then
+            echo "SCP succeeded!"
+            break
+          fi
+          echo "SCP failed. Waiting before retry..."
+          sleep 10
+          if [ $i -eq 5 ]; then
+            echo "::warning::Failed to upload configuration script after 5 attempts."
+          fi
+        done
+        
+        echo "Running configuration script..."
+        for i in {1..5}; do
+          echo "SSH attempt $i of 5..."
+          if timeout 120 ssh -i TwitchCounterKey.pem -o StrictHostKeyChecking=no -o ConnectTimeout=10 ec2-user@$TARGET_DNS "chmod +x ~/configure.sh && sudo ~/configure.sh"; then
+            echo "Configuration script executed successfully!"
+            break
+          fi
+          echo "SSH failed. Waiting before retry..."
+          sleep 10
+          if [ $i -eq 5 ]; then
+            echo "::warning::Failed to execute configuration script after 5 attempts."
+          fi
+        done
         
     - name: Output deployment information
       if: github.event_name != 'workflow_dispatch' || github.event.inputs.environment != 'validate'
