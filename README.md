@@ -119,6 +119,8 @@ docker-compose down
 
 For instructions on deploying this application to an AWS free tier server with a custom domain, see the [AWS Setup Guide](aws-setup.md).
 
+For help with setting up GitHub secrets and environment variables for automated deployment, see the [GitHub Secrets Guide](github-secrets-guide.md).
+
 ## License
 
 MIT

@@ -32,6 +32,8 @@ This method uses GitHub Actions to automatically deploy your application to AWS 
    - `AWS_REGION`: Your preferred AWS region (e.g., us-east-1)
    - `NAMECHEAP_DOMAIN`: Your Namecheap domain (e.g., example.com)
    - `NAMECHEAP_DDNS_PASSWORD`: Your Namecheap Dynamic DNS password
+   
+   For detailed instructions on setting up GitHub secrets, see the [GitHub Secrets Guide](github-secrets-guide.md).
 
 3. **Push to GitHub**:
    ```bash
