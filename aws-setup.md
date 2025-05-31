@@ -320,6 +320,25 @@ If you encounter key pair errors like "InvalidKeyPair.Duplicate: The keypair alr
      ```
    - This will check for existing key pairs and other resources without making changes
 
+### SSH Connection Issues
+
+If the workflow gets stuck on "Waiting for SSH to become available..." or fails during SSH operations:
+
+1. **Timeout Handling**:
+   - The workflow now includes a 5-minute timeout for SSH connection
+   - It will continue with deployment even if SSH times out, but may fail later
+   - Status updates are printed every 30 seconds during the wait
+
+2. **Retry Mechanism**:
+   - All SSH and SCP operations now include automatic retries (5 attempts)
+   - Each attempt has a timeout to prevent indefinite hanging
+   - Detailed logs are provided for each attempt
+
+3. **Troubleshooting**:
+   - Check that port 22 is open in your security group
+   - Verify that the instance is fully initialized (check system logs)
+   - The monitoring step will show the status of all resources regardless of failures
+
 ### Security Group Issues
 
 If you encounter security group errors like "InvalidGroup.Duplicate: The security group 'TwitchCounterSG' already exists":
