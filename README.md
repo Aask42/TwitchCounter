@@ -76,6 +76,45 @@ This will connect to Ninja's Twitch stream and count occurrences of "fuck", "dam
 - The word matching is case-insensitive and matches whole words only
 - Internet connection is required for the speech recognition API
 
+## Docker and Ngrok Setup
+
+You can run this application in Docker and expose it via ngrok for remote access:
+
+### Prerequisites
+
+- Docker and Docker Compose installed
+- Ngrok account and authtoken
+
+### Running with Docker
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/Aask42/TwitchCounter.git
+   cd TwitchCounter
+   ```
+
+2. Create a `.env` file with your configuration:
+   ```
+   TWITCH_CHANNEL=asmongold
+   TARGET_WORDS=fuck,shit,damn
+   NGROK_AUTHTOKEN=your_ngrok_authtoken
+   ```
+
+3. Build and run the Docker containers:
+   ```bash
+   docker-compose up -d
+   ```
+
+4. Access the web interface:
+   - Locally: http://localhost:8080
+   - Ngrok URL: Check the ngrok dashboard at http://localhost:4040
+
+### Stopping the Application
+
+```bash
+docker-compose down
+```
+
 ## License
 
 MIT

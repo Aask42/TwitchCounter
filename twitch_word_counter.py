@@ -251,15 +251,28 @@ class TwitchWordCounter:
                 print(f"{Fore.RED}Error processing audio: {str(e)}{Style.RESET_ALL}")
                 continue
 
+    def get_elapsed_time(self):
+        """Get the elapsed time since the counter started."""
+        elapsed_time = datetime.now() - self.start_time
+        hours, remainder = divmod(elapsed_time.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        return {
+            "hours": hours,
+            "minutes": minutes,
+            "seconds": seconds
+        }
+        
     def display_counts(self):
         """Display the current word counts."""
         # Clear the previous lines
         sys.stdout.write("\033[F" * (len(self.target_words) + 2))
         
-        # Print header
-        elapsed_time = datetime.now() - self.start_time
-        hours, remainder = divmod(elapsed_time.seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
+        # Get elapsed time
+        time_info = self.get_elapsed_time()
+        hours = time_info["hours"]
+        minutes = time_info["minutes"]
+        seconds = time_info["seconds"]
         
         print(f"{Fore.YELLOW}Word Count - Running for {hours:02}:{minutes:02}:{seconds:02}{Style.RESET_ALL}")
         
