@@ -95,7 +95,7 @@ This method uses a single setup script to deploy the application to an existing 
    ```
 
 4. **Follow the prompts**:
-   The script will ask for your Namecheap domain and DDNS password.
+   The script will ask for your AWS region, Namecheap domain, and DDNS password.
 
 ### What the Script Does
 
@@ -246,14 +246,18 @@ If you need to clean up AWS resources manually:
   - `--force`: Delete all instances regardless of age
   - `--days-old N`: Delete instances older than N days (default: 7)
   - `--tag-name NAME`: Delete instances with this tag name (default: TwitchCounter)
+  - `--region REGION`: Specify the AWS region (default: us-east-1 or value of AWS_REGION environment variable)
 
 3. **Example usage**:
-  ```bash
-  # Dry run to see what would be deleted
-  ./cleanup_aws.sh --dry-run
-  
-  # Force delete all TwitchCounter instances
-  ./cleanup_aws.sh --force
-  
-  # Delete instances older than 14 days
-  ./cleanup_aws.sh --days-old 14
+   ```bash
+   # Dry run to see what would be deleted
+   ./cleanup_aws.sh --dry-run
+   
+   # Force delete all TwitchCounter instances
+   ./cleanup_aws.sh --force
+   
+   # Delete instances older than 14 days
+   ./cleanup_aws.sh --days-old 14
+   
+   # Specify a different AWS region
+   ./cleanup_aws.sh --region us-west-2

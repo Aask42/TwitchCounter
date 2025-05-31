@@ -7,6 +7,10 @@ DRY_RUN=false
 FORCE=false
 DAYS_OLD=7
 TAG_NAME="TwitchCounter"
+AWS_REGION=${AWS_REGION:-"us-east-1"}
+
+# Set AWS region
+export AWS_DEFAULT_REGION=$AWS_REGION
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -27,9 +31,14 @@ while [[ $# -gt 0 ]]; do
       TAG_NAME="$2"
       shift 2
       ;;
+    --region)
+      AWS_REGION="$2"
+      export AWS_DEFAULT_REGION="$2"
+      shift 2
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--dry-run] [--force] [--days-old N] [--tag-name NAME]"
+      echo "Usage: $0 [--dry-run] [--force] [--days-old N] [--tag-name NAME] [--region REGION]"
       exit 1
       ;;
   esac

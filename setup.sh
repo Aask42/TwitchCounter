@@ -9,9 +9,13 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# Prompt for Namecheap domain and DDNS password
+# Prompt for AWS region, Namecheap domain and DDNS password
+read -p "Enter your AWS region (e.g., us-east-1): " AWS_REGION
 read -p "Enter your Namecheap domain (e.g., example.com): " DOMAIN
 read -p "Enter your Namecheap DDNS password: " DDNS_PASSWORD
+
+# Set AWS region
+export AWS_REGION=$AWS_REGION
 
 # Update system
 echo "Updating system packages..."
