@@ -65,9 +65,30 @@ jobs:
     - name: Create EC2 instance if needed
       if: steps.check_instance.outputs.exists != 'true'
       run: |
-        # Create key pair
-        aws ec2 create-key-pair --key-name TwitchCounterKey --query 'KeyMaterial' --output text > TwitchCounterKey.pem
-        chmod 400 TwitchCounterKey.pem
+        # Check if key pair exists and handle accordingly
+        KEY_EXISTS=$(aws ec2 describe-key-pairs --key-names TwitchCounterKey 2>/dev/null && echo "true" || echo "false")
+        
+        if [ "$KEY_EXISTS" = "true" ]; then
+          echo "Key pair TwitchCounterKey already exists. Using existing key pair."
+          # If we have the key material in secrets, save it to a file
+          if [ -n "${{ secrets.EC2_SSH_KEY }}" ]; then
+            echo "${{ secrets.EC2_SSH_KEY }}" > TwitchCounterKey.pem
+            chmod 400 TwitchCounterKey.pem
+          else
+            echo "::warning::Key pair exists but we don't have the key material. You may need to delete the key pair or provide the key material as a secret."
+            # Create a new key pair with a different name
+            TIMESTAMP=$(date +%s)
+            aws ec2 create-key-pair --key-name "TwitchCounterKey-$TIMESTAMP" --query 'KeyMaterial' --output text > TwitchCounterKey.pem
+            chmod 400 TwitchCounterKey.pem
+            echo "Created new key pair: TwitchCounterKey-$TIMESTAMP"
+            KEY_NAME="TwitchCounterKey-$TIMESTAMP"
+          fi
+        else
+          # Create key pair
+          aws ec2 create-key-pair --key-name TwitchCounterKey --query 'KeyMaterial' --output text > TwitchCounterKey.pem
+          chmod 400 TwitchCounterKey.pem
+          KEY_NAME="TwitchCounterKey"
+        fi
         
         # Create security group
         SG_ID=$(aws ec2 create-security-group --group-name TwitchCounterSG --description "Security group for Twitch Counter application" --query 'GroupId' --output text)
@@ -86,7 +107,7 @@ jobs:
           --image-id $AMI_ID \
           --count 1 \
           --instance-type t2.micro \
-          --key-name TwitchCounterKey \
+          --key-name "${KEY_NAME:-TwitchCounterKey}" \
           --security-group-ids $SG_ID \
           --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=TwitchCounter}]' \
           --query 'Instances[0].InstanceId' \

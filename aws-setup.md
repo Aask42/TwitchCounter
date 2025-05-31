@@ -249,6 +249,7 @@ If you need to clean up AWS resources manually:
   - `--days-old N`: Delete instances older than N days (default: 7)
   - `--tag-name NAME`: Delete instances with this tag name (default: TwitchCounter)
   - `--region REGION`: Specify the AWS region (default: us-east-1 or value of AWS_REGION environment variable)
+  - `--delete-all-keys`: Delete all key pairs including the main TwitchCounterKey (by default, the main key is preserved)
 
 3. **Example usage**:
    ```bash
@@ -263,3 +264,31 @@ If you need to clean up AWS resources manually:
    
    # Specify a different AWS region
    ./cleanup_aws.sh --region us-west-2
+   
+   # Delete all key pairs including the main one
+   ./cleanup_aws.sh --delete-all-keys
+   ```
+
+### Key Pair Issues
+
+If you encounter key pair errors like "InvalidKeyPair.Duplicate: The keypair already exists":
+
+1. **Using the AWS Console**:
+   - Go to the AWS EC2 Console
+   - Navigate to "Key Pairs" under "Network & Security"
+   - Delete the existing key pair or use a different name
+
+2. **Using the AWS CLI**:
+   - Delete the existing key pair:
+     ```bash
+     aws ec2 delete-key-pair --key-name TwitchCounterKey
+     ```
+   - Or use the cleanup script with the --delete-all-keys option:
+     ```bash
+     ./cleanup_aws.sh --delete-all-keys
+     ```
+
+3. **In GitHub Actions**:
+   - The workflow will automatically handle duplicate key pairs by:
+     - Using the existing key pair if the key material is available in secrets
+     - Creating a new key pair with a timestamp suffix if needed

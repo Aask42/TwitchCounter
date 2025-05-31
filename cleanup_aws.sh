@@ -7,6 +7,7 @@ DRY_RUN=false
 FORCE=false
 DAYS_OLD=7
 TAG_NAME="TwitchCounter"
+KEEP_MAIN_KEY=true
 AWS_REGION=${AWS_REGION:-"us-east-1"}
 
 # Set AWS region
@@ -36,9 +37,13 @@ while [[ $# -gt 0 ]]; do
       export AWS_DEFAULT_REGION="$2"
       shift 2
       ;;
+    --delete-all-keys)
+      KEEP_MAIN_KEY=false
+      shift
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--dry-run] [--force] [--days-old N] [--tag-name NAME] [--region REGION]"
+      echo "Usage: $0 [--dry-run] [--force] [--days-old N] [--tag-name NAME] [--region REGION] [--delete-all-keys]"
       exit 1
       ;;
   esac
@@ -124,10 +129,20 @@ if [ "$DRY_RUN" = false ]; then
     --query 'KeyPairs[*].KeyName' \
     --output text)
   
-  for KEY_NAME in $KEY_PAIRS; do
-    echo "Deleting key pair $KEY_NAME..."
-    aws ec2 delete-key-pair --key-name "$KEY_NAME"
-  done
+  if [ -z "$KEY_PAIRS" ]; then
+    echo "No key pairs found matching TwitchCounterKey*"
+  else
+    for KEY_NAME in $KEY_PAIRS; do
+      # Skip the main key pair if KEEP_MAIN_KEY is true
+      if [ "$KEEP_MAIN_KEY" = true ] && [ "$KEY_NAME" = "TwitchCounterKey" ]; then
+        echo "Keeping main key pair $KEY_NAME"
+        continue
+      fi
+      
+      echo "Deleting key pair $KEY_NAME..."
+      aws ec2 delete-key-pair --key-name "$KEY_NAME"
+    done
+  fi
   
   echo "Cleanup completed!"
 else
