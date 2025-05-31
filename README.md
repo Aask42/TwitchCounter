@@ -115,6 +115,10 @@ You can run this application in Docker and expose it via ngrok for remote access
 docker-compose down
 ```
 
+## AWS Deployment
+
+For instructions on deploying this application to an AWS free tier server with a custom domain, see the [AWS Setup Guide](aws-setup.md).
+
 ## License
 
 MIT
