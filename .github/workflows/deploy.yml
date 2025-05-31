@@ -332,3 +332,44 @@ jobs:
         echo "::notice::Deployment completed successfully!"
         echo "::notice::Application is running at: http://${{ secrets.NAMECHEAP_DOMAIN }}"
         echo "::notice::Server address: $TARGET_DNS"
+        
+    - name: Monitor and report deployment status
+      if: always()
+      run: |
+        echo "Deployment Status Report"
+        echo "======================="
+        
+        # Check if we're in validation mode
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.environment }}" = "validate" ]; then
+          echo "Validation mode was used - no actual deployment was performed."
+          exit 0
+        fi
+        
+        # Check if instance exists
+        if [ -n "${{ env.INSTANCE_ID }}" ] || [ -n "${{ secrets.INSTANCE_ID }}" ]; then
+          INSTANCE_ID="${{ env.INSTANCE_ID }}${{ secrets.INSTANCE_ID }}"
+          INSTANCE_STATE=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo "not found")
+          echo "Instance ID: $INSTANCE_ID"
+          echo "Instance State: $INSTANCE_STATE"
+        else
+          echo "No instance ID found. Deployment may have failed."
+        fi
+        
+        # Check key pair status
+        KEY_PAIRS=$(aws ec2 describe-key-pairs --query "KeyPairs[?starts_with(KeyName, 'TwitchCounterKey')].KeyName" --output text)
+        if [ -n "$KEY_PAIRS" ]; then
+          echo "Key pairs found: $KEY_PAIRS"
+        else
+          echo "No key pairs found with name starting with 'TwitchCounterKey'."
+        fi
+        
+        # Check security groups
+        SG_IDS=$(aws ec2 describe-security-groups --query "SecurityGroups[?GroupName=='TwitchCounterSG'].GroupId" --output text)
+        if [ -n "$SG_IDS" ]; then
+          echo "Security groups found: $SG_IDS"
+        else
+          echo "No security groups found with name 'TwitchCounterSG'."
+        fi
+        
+        echo "======================="
+        echo "If you encountered any issues, please run the workflow with the 'validate' environment to check your setup."
